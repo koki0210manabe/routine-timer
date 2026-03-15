@@ -212,9 +212,12 @@ var currentStep = -1;
 var running = false;
 var finished = false;
 var elapsed = 0;
+var stepStartTime = null; // Date.now() when step started
+var pausedElapsed = 0; // elapsed seconds when paused
 var timerInterval = null;
 var stepActuals = [];
 var audioCtx = null;
+var alarmFired = false; // prevent duplicate alarm
 
 function loadRoutines() {
   try {
@@ -239,36 +242,128 @@ function getAudioCtx() {
   return audioCtx;
 }
 
-function playBeep(freq, duration, count) {
-  var ctx = getAudioCtx();
-  for (var i = 0; i < count; i++) {
+// アラーム音をAudioタグで再生（メディア音量で鳴る）
+var alarmAudio = null;
+function createAlarmAudio() {
+  // 短いビープ音をWAVとしてBase64エンコードして埋め込む
+  var ctx = new OfflineAudioContext(1, 44100 * 2, 44100);
+  // 880Hz x 3回のビープパターンを生成
+  for (var i = 0; i < 3; i++) {
     var osc = ctx.createOscillator();
     var gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
-    osc.frequency.value = freq;
+    osc.frequency.value = 880;
     osc.type = "sine";
-    gain.gain.value = 1.0;
-    var start = ctx.currentTime + i * (duration + 0.1);
-    osc.start(start);
+    var start = i * 0.3;
+    gain.gain.setValueAtTime(0, 0);
     gain.gain.setValueAtTime(1.0, start);
-    gain.gain.exponentialRampToValueAtTime(0.01, start + duration);
-    osc.stop(start + duration);
+    gain.gain.exponentialRampToValueAtTime(0.01, start + 0.15);
+    osc.start(start);
+    osc.stop(start + 0.2);
   }
+  return ctx.startRendering();
+}
+
+function bufferToWavBlob(buffer) {
+  var numCh = buffer.numberOfChannels;
+  var length = buffer.length;
+  var sampleRate = buffer.sampleRate;
+  var bitsPerSample = 16;
+  var byteRate = sampleRate * numCh * bitsPerSample / 8;
+  var blockAlign = numCh * bitsPerSample / 8;
+  var dataSize = length * numCh * bitsPerSample / 8;
+  var headerSize = 44;
+  var buf = new ArrayBuffer(headerSize + dataSize);
+  var view = new DataView(buf);
+  function writeStr(offset, str) { for (var i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); }
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+  var data = buffer.getChannelData(0);
+  var offset = 44;
+  for (var i = 0; i < length; i++) {
+    var sample = Math.max(-1, Math.min(1, data[i]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+    offset += 2;
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+var alarmUrl = null;
+var doneUrl = null;
+
+function initAlarmSounds() {
+  // ステップ終了音: 880Hz x 3回
+  var ctx1 = new OfflineAudioContext(1, 44100 * 2, 44100);
+  for (var i = 0; i < 5; i++) {
+    var osc = ctx1.createOscillator();
+    var gain = ctx1.createGain();
+    osc.connect(gain); gain.connect(ctx1.destination);
+    osc.frequency.value = 880;
+    osc.type = "sine";
+    var s = i * 0.25;
+    gain.gain.setValueAtTime(0, 0);
+    gain.gain.setValueAtTime(1.0, s);
+    gain.gain.exponentialRampToValueAtTime(0.01, s + 0.15);
+    osc.start(s); osc.stop(s + 0.2);
+  }
+  ctx1.startRendering().then(function(buf) {
+    alarmUrl = URL.createObjectURL(bufferToWavBlob(buf));
+  });
+
+  // 完了音: 上昇音階
+  var ctx2 = new OfflineAudioContext(1, 44100 * 3, 44100);
+  var notes = [523, 659, 784, 1047, 1319];
+  for (var j = 0; j < notes.length; j++) {
+    var osc2 = ctx2.createOscillator();
+    var gain2 = ctx2.createGain();
+    osc2.connect(gain2); gain2.connect(ctx2.destination);
+    osc2.frequency.value = notes[j];
+    osc2.type = "sine";
+    var s2 = j * 0.3;
+    gain2.gain.setValueAtTime(0, 0);
+    gain2.gain.setValueAtTime(1.0, s2);
+    gain2.gain.exponentialRampToValueAtTime(0.01, s2 + 0.25);
+    osc2.start(s2); osc2.stop(s2 + 0.3);
+  }
+  ctx2.startRendering().then(function(buf) {
+    doneUrl = URL.createObjectURL(bufferToWavBlob(buf));
+  });
+}
+initAlarmSounds();
+
+function playSound(url) {
+  if (!url) return;
+  var audio = new Audio(url);
+  audio.volume = 1.0;
+  audio.play().catch(function() {});
 }
 
 function playStepEnd() {
-  playBeep(880, 0.15, 3);
-  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+  playSound(alarmUrl);
+  // 通知も送る
+  if ("Notification" in window && Notification.permission === "granted") {
     var step = steps[currentStep];
     new Notification("ルーティンタイマー", {
       body: step.name + " の時間です（" + step.minutes + "分経過）",
-      requireInteraction: false
+      requireInteraction: true,
+      tag: "routine-step"
     });
   }
 }
 
-function playAllDone() { playBeep(1047, 0.2, 5); }
+function playAllDone() { playSound(doneUrl); }
 
 var btnStart = document.getElementById("btnStart");
 var btnNext = document.getElementById("btnNext");
@@ -289,25 +384,34 @@ function startTimer() {
     currentStep = 0;
     stepActuals = steps.map(function() { return null; });
     elapsed = 0;
+    pausedElapsed = 0;
+    alarmFired = false;
   }
   running = true;
+  stepStartTime = Date.now() - pausedElapsed * 1000;
   btnStart.textContent = "一時停止";
   btnStart.classList.add("running");
   btnNext.disabled = false;
+  requestWakeLock();
   updateDisplay();
   updateLog();
 
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = setInterval(function() {
-    elapsed++;
+    // 実時間ベースで計算（画面オフ中の時間も反映）
+    elapsed = Math.floor((Date.now() - stepStartTime) / 1000);
     var target = steps[currentStep].minutes * 60;
-    if (elapsed === target) playStepEnd();
+    if (elapsed >= target && !alarmFired) {
+      alarmFired = true;
+      playStepEnd();
+    }
     updateDisplay();
-  }, 1000);
+  }, 500);
 }
 
 function pauseTimer() {
   running = false;
+  pausedElapsed = elapsed;
   btnStart.textContent = "再開";
   btnStart.classList.remove("running");
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
@@ -319,6 +423,9 @@ function nextStep() {
   if (currentStep >= steps.length - 1) { finishRoutine(); return; }
   currentStep++;
   elapsed = 0;
+  pausedElapsed = 0;
+  stepStartTime = Date.now();
+  alarmFired = false;
   updateDisplay();
   updateLog();
 }
@@ -505,7 +612,17 @@ function requestWakeLock() {
   } catch(e) {}
 }
 document.addEventListener("visibilitychange", function() {
-  if (document.visibilityState === "visible" && running) requestWakeLock();
+  if (document.visibilityState === "visible" && running) {
+    requestWakeLock();
+    // 画面復帰時に経過時間を再計算（画面オフ中の分も反映）
+    elapsed = Math.floor((Date.now() - stepStartTime) / 1000);
+    var target = steps[currentStep].minutes * 60;
+    if (elapsed >= target && !alarmFired) {
+      alarmFired = true;
+      playStepEnd();
+    }
+    updateDisplay();
+  }
 });
 
 if ("Notification" in window && Notification.permission === "default") {
