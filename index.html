@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>朝ルーティンタイマー</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --surface2: #0f3460;
+    --accent: #e94560;
+    --accent-green: #4ecca3;
+    --accent-blue: #7ec8e3;
+    --text: #eee;
+    --text-dim: #8892a4;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  h1 { margin: 20px 0 4px; font-size: 1.3rem; font-weight: 600; letter-spacing: .05em; }
+  .subtitle { color: var(--text-dim); font-size: .82rem; margin-bottom: 12px; }
+
+  .pattern-selector { display: flex; gap: 6px; margin-bottom: 16px; padding: 0 16px; width: 100%; max-width: 480px; }
+  .pattern-selector button {
+    flex: 1; padding: 10px 4px; border: none; border-radius: 8px;
+    background: var(--surface2); color: var(--text-dim); font-size: .78rem; cursor: pointer; transition: all .2s;
+  }
+  .pattern-selector button.active { background: var(--accent-blue); color: #111; font-weight: 600; }
+
+  .main-display { width: 100%; max-width: 480px; padding: 0 16px; }
+  .step-label { text-align: center; font-size: 1.1rem; font-weight: 600; margin-bottom: 4px; min-height: 1.4em; }
+  .step-index { text-align: center; color: var(--text-dim); font-size: .8rem; margin-bottom: 12px; }
+
+  .timer-display { text-align: center; margin: 8px 0 16px; }
+  .timer-circle { position: relative; width: 200px; height: 200px; margin: 0 auto 12px; }
+  .timer-circle svg { transform: rotate(-90deg); width: 200px; height: 200px; }
+  .timer-circle .track { fill: none; stroke: var(--surface2); stroke-width: 8; }
+  .timer-circle .progress {
+    fill: none; stroke: var(--accent-blue); stroke-width: 8; stroke-linecap: round;
+    transition: stroke-dashoffset .5s linear, stroke .3s;
+  }
+  .timer-circle .progress.over { stroke: var(--accent); }
+  .timer-time {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 2.8rem; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: .05em;
+  }
+  .timer-time.over { color: var(--accent); }
+  .over-label {
+    position: absolute; top: 22%; left: 50%; transform: translateX(-50%);
+    font-size: .75rem; color: var(--accent); font-weight: 600; display: none;
+  }
+  .over-label.show { display: block; }
+
+  .controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 16px; }
+  .btn {
+    padding: 12px 28px; border: none; border-radius: 8px;
+    font-size: .95rem; font-weight: 600; cursor: pointer; transition: all .15s;
+  }
+  .btn:active { transform: scale(.96); }
+  .btn-start { background: var(--accent-green); color: #111; }
+  .btn-start.running { background: #c0392b; color: #fff; }
+  .btn-next { background: var(--accent-blue); color: #111; }
+  .btn-reset { background: var(--surface2); color: var(--text); }
+  .btn:disabled { opacity: .4; cursor: default; }
+
+  .progress-bar { width: 100%; height: 6px; background: var(--surface2); border-radius: 3px; margin-bottom: 16px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: var(--accent-green); border-radius: 3px; transition: width .3s; }
+
+  .log-panel { width: 100%; max-width: 480px; padding: 0 16px; margin-bottom: 24px; }
+  .log-title { font-size: .9rem; font-weight: 600; margin-bottom: 8px; }
+  .log-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  .log-table th { text-align: left; padding: 6px 8px; color: var(--text-dim); border-bottom: 1px solid var(--surface2); font-weight: 500; }
+  .log-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.05); }
+  .log-table tr.current td { color: var(--accent-blue); font-weight: 600; }
+  .log-table tr.done td { color: var(--text-dim); }
+  .log-table tr.over-row td.actual-cell { color: var(--accent); font-weight: 600; }
+  .log-table td.actual-cell { font-variant-numeric: tabular-nums; }
+
+  .edit-panel { display: none; width: 100%; max-width: 480px; padding: 0 16px; margin-bottom: 24px; }
+  .edit-panel.show { display: block; }
+  .edit-title { font-size: .9rem; font-weight: 600; margin-bottom: 8px; }
+  .edit-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  .edit-table th { text-align: left; padding: 6px 8px; color: var(--text-dim); border-bottom: 1px solid var(--surface2); }
+  .edit-table td { padding: 4px 8px; }
+  .edit-table input {
+    width: 50px; padding: 4px 6px; border: 1px solid var(--surface2); border-radius: 4px;
+    background: var(--surface); color: var(--text); font-size: .85rem; text-align: right;
+  }
+  .btn-save { background: var(--accent-green); color: #111; margin-top: 8px; }
+  .total-time { text-align: center; color: var(--text-dim); font-size: .82rem; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<h1>朝ルーティンタイマー</h1>
+<div class="subtitle">Morning Routine Timer</div>
+
+<div class="pattern-selector" id="patternSelector">
+  <button data-pattern="commute" class="active">出勤日</button>
+  <button data-pattern="running">ランニング日</button>
+  <button data-pattern="rainy">雨の日</button>
+</div>
+
+<div class="main-display">
+  <div class="step-label" id="stepLabel">スタートを押してください</div>
+  <div class="step-index" id="stepIndex"></div>
+
+  <div class="timer-display">
+    <div class="timer-circle">
+      <svg viewBox="0 0 200 200">
+        <circle class="track" cx="100" cy="100" r="88"/>
+        <circle class="progress" id="progressRing" cx="100" cy="100" r="88"
+          stroke-dasharray="553" stroke-dashoffset="553"/>
+      </svg>
+      <div class="over-label" id="overLabel">超過</div>
+      <div class="timer-time" id="timerTime">00:00</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-start" id="btnStart">スタート</button>
+    <button class="btn btn-next" id="btnNext" disabled>次へ</button>
+    <button class="btn btn-reset" id="btnReset">リセット</button>
+  </div>
+
+  <div class="progress-bar">
+    <div class="progress-bar-fill" id="progressBar" style="width:0%"></div>
+  </div>
+  <div class="total-time" id="totalTime"></div>
+</div>
+
+<div class="log-panel">
+  <div class="log-title">ログ</div>
+  <table class="log-table">
+    <thead><tr><th>ステップ</th><th>目標</th><th>実測</th></tr></thead>
+    <tbody id="logBody"></tbody>
+  </table>
+</div>
+
+<div class="edit-panel" id="editPanel">
+  <div class="edit-title">目標時間の編集</div>
+  <table class="edit-table">
+    <thead><tr><th>ステップ</th><th>目標(分)</th><th>実測</th></tr></thead>
+    <tbody id="editBody"></tbody>
+  </table>
+  <button class="btn btn-save" id="btnSave">保存</button>
+</div>
+
+<script>
+var DEFAULT_ROUTINES = {
+  commute: {
+    name: "出勤日",
+    steps: [
+      { name: "お手洗い", minutes: 2 },
+      { name: "体重測定", minutes: 1 },
+      { name: "シャワー", minutes: 10 },
+      { name: "体拭き+ドライヤー", minutes: 8 },
+      { name: "EAA摂取", minutes: 1 },
+      { name: "ヨガ", minutes: 15 },
+      { name: "朝食準備", minutes: 10 },
+      { name: "朝食", minutes: 20 },
+      { name: "着替え+荷物確認", minutes: 12 }
+    ]
+  },
+  running: {
+    name: "ランニング日",
+    steps: [
+      { name: "お手洗い", minutes: 2 },
+      { name: "体重測定", minutes: 1 },
+      { name: "洗顔", minutes: 1 },
+      { name: "歯磨き", minutes: 4 },
+      { name: "EAA摂取", minutes: 1 },
+      { name: "ヨガ", minutes: 15 },
+      { name: "ランニング", minutes: 35 },
+      { name: "シャワー+体拭き+ドライヤー", minutes: 18 },
+      { name: "朝食準備", minutes: 10 },
+      { name: "朝食", minutes: 20 },
+      { name: "呼吸法", minutes: 15 }
+    ]
+  },
+  rainy: {
+    name: "雨の日",
+    steps: [
+      { name: "お手洗い", minutes: 2 },
+      { name: "体重測定", minutes: 1 },
+      { name: "シャワー", minutes: 10 },
+      { name: "体拭き+ドライヤー", minutes: 8 },
+      { name: "EAA摂取", minutes: 1 },
+      { name: "ヨガ", minutes: 15 },
+      { name: "朝食準備", minutes: 10 },
+      { name: "朝食", minutes: 20 },
+      { name: "呼吸法", minutes: 15 }
+    ]
+  }
+};
+
+var currentPattern = "commute";
+var routines = loadRoutines();
+var steps = [];
+var currentStep = -1;
+var running = false;
+var finished = false;
+var elapsed = 0;
+var timerInterval = null;
+var stepActuals = [];
+var audioCtx = null;
+
+function loadRoutines() {
+  try {
+    var saved = localStorage.getItem("routine-timer-routines");
+    if (saved) {
+      var parsed = JSON.parse(saved);
+      for (var key in DEFAULT_ROUTINES) {
+        if (!parsed[key]) parsed[key] = DEFAULT_ROUTINES[key];
+      }
+      return parsed;
+    }
+  } catch(e) {}
+  return JSON.parse(JSON.stringify(DEFAULT_ROUTINES));
+}
+
+function saveRoutines() {
+  localStorage.setItem("routine-timer-routines", JSON.stringify(routines));
+}
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function playBeep(freq, duration, count) {
+  var ctx = getAudioCtx();
+  for (var i = 0; i < count; i++) {
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = freq;
+    osc.type = "sine";
+    gain.gain.value = 1.0;
+    var start = ctx.currentTime + i * (duration + 0.1);
+    osc.start(start);
+    gain.gain.setValueAtTime(1.0, start);
+    gain.gain.exponentialRampToValueAtTime(0.01, start + duration);
+    osc.stop(start + duration);
+  }
+}
+
+function playStepEnd() {
+  playBeep(880, 0.15, 3);
+  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+    var step = steps[currentStep];
+    new Notification("ルーティンタイマー", {
+      body: step.name + " の時間です（" + step.minutes + "分経過）",
+      requireInteraction: false
+    });
+  }
+}
+
+function playAllDone() { playBeep(1047, 0.2, 5); }
+
+var btnStart = document.getElementById("btnStart");
+var btnNext = document.getElementById("btnNext");
+var btnReset = document.getElementById("btnReset");
+var btnSave = document.getElementById("btnSave");
+var stepLabel = document.getElementById("stepLabel");
+var stepIndex = document.getElementById("stepIndex");
+var timerTime = document.getElementById("timerTime");
+var overLabel = document.getElementById("overLabel");
+var progressRing = document.getElementById("progressRing");
+var progressBar = document.getElementById("progressBar");
+var totalTime = document.getElementById("totalTime");
+var editPanel = document.getElementById("editPanel");
+
+function startTimer() {
+  if (finished) return;
+  if (currentStep === -1) {
+    currentStep = 0;
+    stepActuals = steps.map(function() { return null; });
+    elapsed = 0;
+  }
+  running = true;
+  btnStart.textContent = "一時停止";
+  btnStart.classList.add("running");
+  btnNext.disabled = false;
+  updateDisplay();
+  updateLog();
+
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(function() {
+    elapsed++;
+    var target = steps[currentStep].minutes * 60;
+    if (elapsed === target) playStepEnd();
+    updateDisplay();
+  }, 1000);
+}
+
+function pauseTimer() {
+  running = false;
+  btnStart.textContent = "再開";
+  btnStart.classList.remove("running");
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+function nextStep() {
+  if (currentStep < 0 || finished) return;
+  stepActuals[currentStep] = elapsed;
+  if (currentStep >= steps.length - 1) { finishRoutine(); return; }
+  currentStep++;
+  elapsed = 0;
+  updateDisplay();
+  updateLog();
+}
+
+function finishRoutine() {
+  running = false;
+  finished = true;
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  playAllDone();
+  btnStart.textContent = "スタート";
+  btnStart.classList.remove("running");
+  btnStart.disabled = true;
+  btnNext.disabled = true;
+  document.title = "完了！ - 朝ルーティンタイマー";
+  stepLabel.textContent = "完了！";
+  stepIndex.textContent = "";
+  timerTime.textContent = "00:00";
+  timerTime.classList.remove("over");
+  overLabel.classList.remove("show");
+  progressRing.classList.remove("over");
+  progressRing.style.strokeDashoffset = "0";
+  progressBar.style.width = "100%";
+  updateLog();
+  showEditPanel();
+}
+
+function resetTimer() {
+  running = false;
+  finished = false;
+  currentStep = -1;
+  elapsed = 0;
+  stepActuals = [];
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  btnStart.textContent = "スタート";
+  btnStart.classList.remove("running");
+  btnStart.disabled = false;
+  btnNext.disabled = true;
+  document.title = "朝ルーティンタイマー";
+  stepLabel.textContent = "スタートを押してください";
+  stepIndex.textContent = "";
+  timerTime.textContent = "00:00";
+  timerTime.classList.remove("over");
+  overLabel.classList.remove("show");
+  progressRing.classList.remove("over");
+  progressRing.style.strokeDashoffset = "553";
+  progressBar.style.width = "0%";
+  editPanel.classList.remove("show");
+  updateLog();
+  updateTotalTime();
+}
+
+function updateDisplay() {
+  if (currentStep < 0 || currentStep >= steps.length) return;
+  var step = steps[currentStep];
+  var target = step.minutes * 60;
+
+  stepLabel.textContent = step.name;
+  stepIndex.textContent = (currentStep + 1) + " / " + steps.length;
+
+  var isOver = elapsed > target;
+  var display = isOver ? elapsed - target : target - elapsed;
+  var mm = String(Math.floor(display / 60)).padStart(2, "0");
+  var ss = String(display % 60).padStart(2, "0");
+
+  if (isOver) {
+    timerTime.textContent = "+" + mm + ":" + ss;
+    timerTime.classList.add("over");
+    overLabel.classList.add("show");
+    progressRing.classList.add("over");
+    progressRing.style.strokeDashoffset = "0";
+    document.title = "[+" + mm + ":" + ss + "] " + step.name;
+  } else {
+    timerTime.textContent = mm + ":" + ss;
+    timerTime.classList.remove("over");
+    overLabel.classList.remove("show");
+    progressRing.classList.remove("over");
+    var ratio = elapsed / target;
+    progressRing.style.strokeDashoffset = String(553 * (1 - ratio));
+    document.title = "[" + mm + ":" + ss + "] " + step.name;
+  }
+
+  var totalSteps = steps.length;
+  var pct = ((currentStep + (elapsed / Math.max(target, elapsed))) / totalSteps) * 100;
+  progressBar.style.width = Math.min(pct, 100) + "%";
+}
+
+function formatSeconds(s) {
+  if (s === null) return "-";
+  var m = Math.floor(s / 60);
+  var sec = s % 60;
+  return m + ":" + String(sec).padStart(2, "0");
+}
+
+function updateLog() {
+  var tbody = document.getElementById("logBody");
+  tbody.innerHTML = "";
+  steps.forEach(function(step, i) {
+    var tr = document.createElement("tr");
+    var actual = stepActuals[i];
+    var isOver = actual !== null && actual > step.minutes * 60;
+
+    if (i === currentStep && !finished) tr.classList.add("current");
+    else if (actual !== null) tr.classList.add("done");
+    if (isOver) tr.classList.add("over-row");
+
+    tr.innerHTML =
+      "<td>" + step.name + "</td>" +
+      "<td>" + step.minutes + "分</td>" +
+      "<td class=\"actual-cell\">" + (actual !== null ? formatSeconds(actual) : (i === currentStep ? "..." : "-")) + "</td>";
+    tbody.appendChild(tr);
+  });
+}
+
+function updateTotalTime() {
+  var total = steps.reduce(function(sum, s) { return sum + s.minutes; }, 0);
+  var h = Math.floor(total / 60);
+  var m = total % 60;
+  totalTime.textContent = "合計: " + (h > 0 ? h + "時間" : "") + m + "分";
+}
+
+function showEditPanel() {
+  editPanel.classList.add("show");
+  var tbody = document.getElementById("editBody");
+  tbody.innerHTML = "";
+  steps.forEach(function(step, i) {
+    var actual = stepActuals[i];
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + step.name + "</td>" +
+      "<td><input type=\"number\" min=\"0\" value=\"" + step.minutes + "\" data-index=\"" + i + "\"></td>" +
+      "<td>" + (actual !== null ? formatSeconds(actual) : "-") + "</td>";
+    tbody.appendChild(tr);
+  });
+}
+
+function saveEdits() {
+  var inputs = editPanel.querySelectorAll("input[data-index]");
+  inputs.forEach(function(input) {
+    var idx = parseInt(input.dataset.index);
+    var val = parseInt(input.value);
+    if (!isNaN(val) && val >= 0) {
+      steps[idx].minutes = val;
+      routines[currentPattern].steps[idx].minutes = val;
+    }
+  });
+  saveRoutines();
+  updateLog();
+  updateTotalTime();
+  editPanel.classList.remove("show");
+  stepLabel.textContent = "保存しました";
+}
+
+function switchPattern(pattern) {
+  currentPattern = pattern;
+  steps = routines[pattern].steps.map(function(s) { return {name: s.name, minutes: s.minutes}; });
+  document.querySelectorAll(".pattern-selector button").forEach(function(b) {
+    b.classList.toggle("active", b.dataset.pattern === pattern);
+  });
+  resetTimer();
+}
+
+btnStart.addEventListener("click", function() {
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  getAudioCtx();
+  if (running) pauseTimer(); else startTimer();
+});
+
+btnNext.addEventListener("click", nextStep);
+btnReset.addEventListener("click", resetTimer);
+btnSave.addEventListener("click", saveEdits);
+
+document.getElementById("patternSelector").addEventListener("click", function(e) {
+  if (e.target.dataset.pattern && !running && !finished) {
+    switchPattern(e.target.dataset.pattern);
+  }
+});
+
+var wakeLock = null;
+function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) {
+      navigator.wakeLock.request("screen").then(function(wl) { wakeLock = wl; });
+    }
+  } catch(e) {}
+}
+document.addEventListener("visibilitychange", function() {
+  if (document.visibilityState === "visible" && running) requestWakeLock();
+});
+
+if ("Notification" in window && Notification.permission === "default") {
+  Notification.requestPermission();
+}
+
+switchPattern("commute");
+</script>
+</body>
+</html>
